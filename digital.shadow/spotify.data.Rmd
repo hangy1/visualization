@@ -1,0 +1,340 @@
+---
+title: "my digital shadow"
+author: "Hang Yin"
+date: "2/14/2021"
+output: 
+  html_document:
+    keep_md: yes
+    code_folding: hide
+---
+
+```{r, warning=FALSE, results='hide'}
+library(dplyr)
+library(jsonlite)
+library(lubridate)
+library(gghighlight)
+library(spotifyr)
+library(tidyverse)
+library(knitr)
+library(ggplot2)
+library(plotly)
+library(fmsb)
+library(factoextra)
+library(RColorBrewer)
+library("GISTools")
+
+library(tm)
+library(SnowballC)
+library("wordcloud")
+library(readr)
+library(dplyr)
+library(e1071)
+library(mlbench)
+library(makeFlow)
+
+# Connecting spotify API
+client_id <- "9161e59c250e4e5eb9704349f3ae353b"
+sec_id <- "55cfbe3dcc8f40739bb622a8e3a015f0"
+Sys.setenv(SPOTIFY_CLIENT_ID = '9161e59c250e4e5eb9704349f3ae353b')
+Sys.setenv(SPOTIFY_CLIENT_SECRET = '55cfbe3dcc8f40739bb622a8e3a015f0')
+get_spotify_authorization_code()
+spotifyr::get_spotify_access_token()
+token <- "BQBEayfPdUYTSGwPacT9lYJHOe-KtbhVKux7OiBUnrZBJB3pclAfvgasi-VsAoI2bQZnZ2rsFs7ejT-2m4I"
+
+```
+
+
+## Personal Listening History
+```{r}
+## total played time(hour) and total artist 
+stream_df <- fromJSON("MyData/StreamingHistory0.json", flatten = TRUE)
+total_time <- sum(stream_df$msPlayed)/1000/3600 
+#366h
+total_artist <- length(unique(stream_df$artistName)) 
+#724
+total_track <- length(stream_df$trackName)  
+#8689
+unique_track <- length(unique(stream_df$trackName)) 
+#2086
+track_repeat <- table(stream_df$trackName)
+head(sort(table(stream_df$trackName), decreasing = T), n = 10)
+```
+
+```{r}
+stream_df <-  stream_df %>% 
+  filter(endTime < "2021-01-01") %>% 
+  mutate(date_time = ymd_hm(endTime, tz = NULL), endTime = NULL) 
+
+stream_df$weekdays <- weekdays(stream_df$date_time)
+
+stream_df <-  stream_df %>%
+  mutate(months = month.abb[month(stream_df$date_time)])
+
+breaks <- hour(hm("00:00", "6:00", "12:00", "18:00", "23:59"))
+labels <- c("Midnight", "Morning", "Afternoon", "Evening")
+stream_df$time_of_day <- cut(x=hour(stream_df$date_time), breaks = breaks, labels = labels, include.lowest=TRUE)
+
+month_max <-stream_df %>%
+  group_by(months) %>%
+  count(trackName) %>% 
+  top_n(1) %>% 
+  distinct(months,.keep_all = TRUE) %>%
+  arrange(match(months, month.abb))
+
+month_time <- stream_df %>%
+  group_by(months, time_of_day) %>%
+  summarise(time_h = sum(msPlayed)/1000/60/60)
+
+weekdays_play <- stream_df %>% 
+  group_by(weekdays) %>%
+  summarize(hours = sum(msPlayed) / 3600000) %>% 
+  arrange(weekdays)
+stream_df$quarter <- quarter(stream_df$date_time)
+weekdays_play <- stream_df %>% 
+  group_by(weekdays, quarter) %>%
+  summarize(hours = sum(msPlayed) / 3600000) 
+view(weekdays_play)
+
+weekdays_play$weekdays <- factor(weekdays_play$weekdays, levels= c("Sunday", "Monday", 
+                                         "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"))
+weekdays_play <- weekdays_play[order(weekdays_play$weekdays),]
+
+
+
+  
+```
+
+## Plots
+
+```{r, echo=FALSE}
+ggplot(month_max, aes(ordered(month_max$months, month.abb), 
+                      month_max$n,label = month_max$trackName)) + 
+  geom_segment(aes(x = ordered(month_max$months, month.abb), xend = ordered(month_max$months, month.abb),  y= 0, yend = month_max$n), color = "grey") +
+  geom_point(stat = "identity",colour = "dark green", fill = "dark green") +
+  ylim(0,60) +
+  coord_flip() +
+  geom_text(size = 3.5,hjust = -0.1) + 
+  labs(x= "Month", y= "most played song of the month") +
+  theme_classic()
+# title = "My Monthly Top Songs"
+
+ggplot(month_time, aes(ordered(month_time$months,month.abb), month_time$time_h)) + 
+  geom_col(aes(fill = time_of_day)) +
+  scale_fill_brewer(palette="Greens") + 
+  labs(x= "Months", y= "Hours of Music", fill = "Time of the Day") +
+  theme_classic()
+#title = "How much time did I spend on Spotify"
+ 
+ggplot(weekdays_play, aes(x = weekdays,y = hours/13, group = factor(quarter),colour = factor(quarter))) + 
+    geom_line(size = 1) + geom_point (stat = "identity", size = 2)+
+  scale_color_brewer(palette ="Paired") +
+labs(x= "Date", y= "Hours of music", colour = "Quarter")  + theme_classic()
+     #title = "My Listening pattern Throughout the Week")
+```
+
+##  Spotify API
+```{r}
+# getting my top genre
+ artist_genre <-  get_my_top_artists_or_tracks(type = 'artists', time_range = 'long_term', limit = 50) 
+ artist_genre <- artist_genre %>%
+    rowwise %>% 
+    mutate(genres = paste(genres, collapse = ', ')) 
+```
+
+```{r}
+# create texting plot 
+corpus = Corpus(VectorSource(artist_genre$genres))
+
+#Removing Punctuation
+corpus = tm_map(corpus, removePunctuation)
+
+for (i in c(1:50)) {
+  print(corpus[[i]][1])
+}
+
+# create frequency matrix
+DTM <- TermDocumentMatrix(corpus)
+text_matrix <- as.matrix(DTM)
+f <- sort(rowSums(text_matrix),decreasing=TRUE)
+text_df <- data.frame(word = names(f),freq=f)
+text_df
+```
+
+
+```{r}
+# Text graph
+set.seed(124)
+wordcloud(words = text_df$word, freq = text_df$freq, min.freq = 1, random.order=FALSE, rot.per=0.5, colors= brewer.pal(12,"Dark2"))
+```
+
+
+## 12 months/6 months/3 months prefer audio features
+```{r}
+# getting tracks id
+year_fav <- get_my_top_artists_or_tracks(type = "tracks", limit = 50, offset = 0,
+ time_range = "long_term",authorization = get_spotify_authorization_code(),include_meta_info = FALSE)
+ 
+half_year_fav <- get_my_top_artists_or_tracks(type = "tracks", limit = 25, offset = 0,
+time_range = "medium_term", authorization = get_spotify_authorization_code(),
+ include_meta_info = FALSE)
+
+recent_fav <- get_my_top_artists_or_tracks(type = "tracks", limit = 13, offset = 0,
+time_range = "short_term",authorization = get_spotify_authorization_code(),include_meta_info = FALSE)
+```
+
+
+```{r}
+#getting audio features 
+year_fav_feature <- get_track_audio_features(year_fav$id, authorization = get_spotify_access_token())
+year_fav_feature <- year_fav_feature[, c("danceability", "loudness", "speechiness", "valence","tempo", "acousticness", "energy")]
+
+half_year_feature <- get_track_audio_features(half_year_fav$id, authorization = get_spotify_access_token())[, c("danceability", "loudness", "speechiness", "valence","tempo", "acousticness", "energy")]
+
+recent_feature <- get_track_audio_features(recent_fav$id, authorization = get_spotify_access_token())[, c("danceability", "loudness", "speechiness", "valence","tempo", "acousticness", "energy")]
+```
+
+
+```{r}
+#max min normalization 
+normalize <- function(x) {
+  return ((x - min(x)) / (max(x) - min(x)))
+}
+
+combined_fav <- rbind(year_fav_feature, half_year_feature, recent_feature)
+combined_fav_n <- as.data.frame(lapply(combined_fav, normalize)) 
+year_fav_mean <- colMeans(combined_fav_n[1:50,])
+half_year_fav_n <- colMeans(combined_fav_n[51:75,])
+recent_fav_n <- colMeans(combined_fav_n[76:88,])
+
+combined_fav_feature <- data.frame(rbind(year_fav_mean,half_year_fav_n,recent_fav_n))
+color = brewer.pal(3,"Paired")
+radarchart(combined_fav_feature,axistype=0 ,maxmin=F,
+           pcol=color , plwd=2 , plty=1,
+           cglcol="grey", cglty=3, axislabcol="grey", cglwd=0.8,vlcex=0.8 )
+legend(x=-1.4, y=1.3, legend = c("12 months", "6 months", "3 months"), bty = "n", pch=20 , col=color , text.col = "black",cex=0.8, pt.cex=0.8, y.intersp = 0.8)
+#title = "Audio feature preference for the past year"
+
+
+```
+
+```{r}
+playlist1_name <- "chill"
+playlist1_uris  <- "4lirpnD9acutQGn1sI8ynJ"
+playlist1_features <- get_playlist_audio_features(playlist1_name, playlist1_uris,authorization = get_spotify_access_token())[, c("danceability", "loudness", "speechiness", "valence","tempo", "acousticness", "energy")]
+playlist1_features <- data.frame(playlist1_features)
+rownames(playlist1_features) <- c(paste ("chill", c(1:48)))
+```
+
+
+```{r}
+#playlist 2
+playlist2_name <- "house&techno"
+playlist2_uris  <- "1gw8sDn1VF96t1B7QOfPOF"
+playlist2_features <- get_playlist_audio_features(playlist2_name, playlist2_uris,authorization = get_spotify_access_token())[, c("danceability", "loudness", "speechiness", "valence","tempo", "acousticness", "energy")]
+playlist2_features <- data.frame(playlist2_features)
+rownames(playlist2_features) <- c(paste ("H&T", c(1:32)))
+```
+
+```{r}
+#playlist 3
+playlist3_name <- "hip hop"
+playlist3_uris <- "0DsnqxDaX9wTarPom1yGSc"
+playlist3_features <- get_playlist_audio_features(playlist3_name, playlist3_uris,authorization = get_spotify_access_token())[, c("danceability", "loudness", "speechiness", "valence","tempo", "acousticness", "energy")]
+playlist3_features <- data.frame(playlist3_features)
+rownames(playlist3_features) <- c(paste ("hiphop", c(1:23)))
+
+
+```
+
+```{r}
+#normalize playlists data
+
+combined_full <- as.data.frame(rbind(playlist1_features, playlist2_features, playlist3_features))
+
+combined_full_n <- data.frame(lapply(combined_full,normalize)) %>% `row.names<-`(rownames(combined_full))
+
+
+chill_mean <- colMeans(combined_full_n[1:49,])
+
+HouseTech_mean <- colMeans(combined_full_n[50:81,])
+
+HipHop_mean <- colMeans(combined_full_n[-23,])
+
+combined_mean <- data.frame(rbind(chill_mean,HouseTech_mean,HipHop_mean ))
+```
+
+
+```{r}
+get_track_audio_features(c("0YDSEyBzPsuQzkuc9Bu8iR", "63PjUXm7NNcqm5OCyRMbr5"))[,c("danceability", "loudness", "speechiness", "valence","tempo", "acousticness", "energy")]
+
+```
+
+
+## Radar plot
+```{r}
+rownames(combined_mean) <- c("Chill", "House Techno", "Hip Hop")
+color_4 <- brewer.pal(4,"Paired")
+color4_fill <- add.alpha(color_4,0.3 ) 
+radarchart(combined_mean,axistype=0 ,maxmin=F, pcol = color_4, pfcol = color4_fill,plwd=3 , plty=1,
+           cglcol="grey", cglty=3, axislabcol="grey", cglwd=0.8,vlcex=0.8 )
+legend(x=-1.4, y=1.3, legend = rownames(combined_mean),bty = "n", pch=20,col=color_4,text.col = "black",cex=0.8, pt.cex=0.8)
+#title = "My Playlists Audio Features")
+
+```
+
+
+```{r}
+#recently liked music list
+liked_song <- get_my_saved_tracks(limit =20 )
+recent_liked_feat <-  get_track_audio_features(liked_song$track.id, authorization = get_spotify_access_token())[, c("danceability", "loudness", "speechiness", "valence","tempo", "acousticness", "energy")]
+recent_liked_feat <- data.frame(recent_liked_feat)
+rownames(recent_liked_feat) <- c(paste ("recent_liked", c(1:20)))
+
+recent_n <- as.data.frame(lapply(rbind(recent_liked_feat,combined_full),normalize))
+
+recent_liked_mean <- colMeans(recent_n[1:20,])
+recent_combined <- rbind(combined_mean,recent_liked_mean)
+rownames(recent_combined) <- c("Chill", "House Techno", "Hip Hop","Recently Liked")
+
+color_4 <- brewer.pal(4,"Paired")
+color4_fill <- add.alpha(color_4,0.3 ) 
+radarchart(recent_combined, axistype=0 ,maxmin=F, pcol = color_4,plwd=2,   plty=1,cglcol="grey", cglty=3, axislabcol="grey", cglwd=0.8,vlcex=0.8)
+
+legend(x=-1.6, y=1.35, legend = rownames(recent_combined),bty = "n", pch=20,col=color_4,text.col = "black",cex=0.8, pt.cex=0.8,y.intersp = 0.8)
+
+
+
+
+
+```
+
+
+```{r}
+#weekly discover
+playlist_name <- "weekly discovery"
+playlist_uris  <- "37i9dQZEVXcUXurUueO6bb"
+playlist_disc_features <- get_playlist_audio_features(playlist_name, playlist_uris,authorization = get_spotify_access_token())[1:20, c("danceability", "loudness", "speechiness", "valence","tempo", "acousticness", "energy")]
+playlist_disc_features <- data.frame(playlist_disc_features)
+rownames(playlist_disc_features) <- c(paste ("discover", c(1:20)))
+disc_liked <- rbind(playlist_disc_features, combined_full)
+disc_liked_n <- data.frame(lapply(disc_liked,normalize)) %>% `row.names<-`(rownames(disc_liked))
+
+disc_mean <- colMeans(disc_liked_n[1:20,])
+
+disc_combined <- rbind(combined_mean,disc_mean)
+rownames(disc_combined) <- c("Chill", "House Techno", "Hip Hop","Discover")
+
+color_4 <- brewer.pal(4,"Paired")
+color4_fill <- add.alpha(color_4,0.3 )
+radarchart(disc_combined, axistype=0 ,maxmin=F, pcol = color_4, plwd=2 , plty=1,cglcol="grey", cglty=3, axislabcol="grey", cglwd=0.8,vlcex=0.8 )
+
+legend(x= -1.6, y=1.3, legend = rownames(disc_combined),bty = "n", pch=20,col=color_4,text.col = "black",cex=0.8, pt.cex=0.8,y.intersp = 0.8)
+#title = "My Playlists Audio Features")
+
+```
+
+
+## Conclusion: 
+#The timeline analysis matches my daily schedule each period: quarantine,summer break,  work 9-5 onsite, work 9-5 remote.The audio feature analysis matches for my playlists matches the genre style, and also I discovered the spotify weekly discover is based on my long-term music preference. 
+# I encountered the difficulty on making clear spider graphs, they need to match my color theme and also easy to read. I don't think I did a great good on that. I also had difficulty connecting my specific listening time to the spotify API, that's why I couldn't analyze my prefer audio features through the day (group by morning, afternoon, night, and midnight).
+
