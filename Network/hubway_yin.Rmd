@@ -1,0 +1,87 @@
+---
+title: "Network"
+author: Hang Yin
+output: 
+  html_document:
+    keep_md: yes
+---
+
+```{r, results='hide'}
+#setup
+library(MASS)
+library(tidygraph)
+library(tidyverse)
+library(ggraph)
+library(igraph)
+```
+
+```{r}
+hubway_n <- read.csv("hubway [Nodes].csv", header=TRUE)
+hubway_e <- read.csv("hubway [Edges].csv", header=TRUE)
+net <- graph_from_data_frame(d = hubway_e, vertices = hubway_n, directed = T) 
+net <- as_tbl_graph(net)
+```
+
+```{r, eval=FALSE}
+#or load by using tidygraph
+net_t <- tbl_graph(nodes = hubway_n %>% mutate(Id = as.character(Id)))
+```
+
+```{r}
+subnet <- net %E>% slice(sample(1:7300,1500)) 
+subnet %>% ggraph() +geom_edge_fan0(alpha = 0.1) +geom_node_point() +theme_minimal()
+
+subnet %>% create_layout(layout= "stress") %>% ggplot() + geom_point(aes(x,y))
+
+#only plot nodes 1:5
+net %N>% slice(1:5) %>% plot()
+# plot 1:500 edges
+net %E>% slice(1:500) %>% plot()
+
+```
+
+```{r}
+#manual layout
+subnet %>% ggraph(layout = "manual", x = lon, y = lat) +geom_edge_fan0(alpha = 0.1) +geom_node_point() +theme_minimal()
+```
+
+```{r}
+#define a function
+net.plot <- function(x)x %>% ggraph(layout = "manual", x = lon, y = lat) +geom_edge_fan0(alpha = 0.1) +geom_node_point() +theme_minimal()
+net.plot(net) #or net %>% net.plot
+#filter
+net %E>% filter(birth_date < (1980)) %>% net.plot
+net %E>% filter(gender == "female") %>% net.plot
+```
+```{r}
+net %N>% mutate(degree = centrality_degree(), between = centrality_betweenness())
+subnet <- net %N>% filter(str_starts(terminalName, "A3200")) %>% mutate(degree = centrality_degree(), between = centrality_betweenness())
+g <- subnet %>% ggraph(layout = "manual", x = lon, y = lat) +
+  geom_edge_fan(alpha = 0.1, arrow = arrow(type = "closed")) +
+  geom_node_point(aes(color = between, size = degree)) +
+  geom_node_text(aes(label = str_sub(name,1,10)), repel = T) +theme_graph()
+
+ggplot_build(g)
+l <- layer_scales(g) 
+l$x$range$range
+l$y$range$range
+
+```
+
+```{r}
+#combine shape file and network
+library(sf)
+bos <- read_sf("~/Desktop/visulization/BOSnbhds/Bos_neighborhoods_new.shp")
+bos <- bos %>% st_transform(crs = 4326)
+subnet %>%
+  ggraph(layout = "manual", x = lon, y = lat) +
+  geom_sf(data = bos) +
+  geom_edge_fan(aes(alpha = duration), arrow = arrow(angle = 5, type = "closed")) +
+  geom_node_point(aes(size = degree, color = between)) +
+  geom_node_text(aes(label = str_sub(name, 1, 15)), size = 3, repel = T) + 
+  lims(x= l$x$range$range, y =l$y$range$range) +
+  theme_graph()
+```
+
+
+
