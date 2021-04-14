@@ -1,0 +1,12 @@
+name: cityShiny
+title: cityShiny
+username:
+account: hyin
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 3888200
+bundleId: 4413835
+url: https://hyin.shinyapps.io/cityShiny/
+when: 1617148949.24122
+asMultiple: FALSE
+asStatic: FALSE
